@@ -3,16 +3,16 @@
 #
 import requests
 from bs4 import BeautifulSoup
-from enum import Enum
-
-class ItemType(Enum):
-  MOD = 1
-  RESOURCE_PACK = 2
-  SHADER = 3
-  PLUGIN = 4
+from ItemType import ItemType
 
 def modrinthVersionsPage(itemType: str, name: str) -> str:
   return f"https://modrinth.com/{itemType}/{name}/versions"
+
+def getDataPackPage(pluginName: str, versionString: str) -> str:
+  return requests.get(modrinthVersionsPage("datapack", pluginName), params={
+    "g": versionString,
+    "l": "datapack"
+  }).text
 
 def getPluginPage(pluginName: str, versionString: str) -> str:
   return requests.get(modrinthVersionsPage("plugin", pluginName), params={
@@ -43,6 +43,7 @@ def pageContents(itemType: ItemType, itemName: str, version: str) -> str:
     case ItemType.RESOURCE_PACK:  return getResourcePackPage(itemName, version)
     case ItemType.SHADER:         return getShaderPage(itemName, version)
     case ItemType.PLUGIN:         return getPluginPage(itemName, version)
+    case ItemType.DATA_PACK:      return getDataPackPage(itemName, version)
 
 def findDownloadUrl(itemType: ItemType, modName: str, version: str) -> str | None:
   pageHtml = BeautifulSoup(pageContents(itemType, modName, version), features="html.parser")

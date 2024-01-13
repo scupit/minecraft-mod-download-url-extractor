@@ -1,7 +1,8 @@
 import requests
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, assert_never
+from ItemType import ItemType
 
 MODRINTH_API_BASE: str = "https://api.modrinth.com/v2"
 
@@ -29,13 +30,13 @@ def _projectFileFromJson(fileJson) -> ProjectFile:
   )
 
 @dataclass
-class Dependency:
+class DependencyDescription:
   versionId: str
   projectId: str
   isRequired: bool
 
-def _dependencyFromJson(depJson) -> Dependency:
-  return Dependency(
+def _dependencyFromJson(depJson) -> DependencyDescription:
+  return DependencyDescription(
     versionId=depJson["version_id"],
     projectId=depJson["project_id"],
     isRequired= depJson["dependency_type"] == "required"
@@ -50,7 +51,13 @@ class ProjectVersion:
   supportedVersions: list[str]
   files: list[ProjectFile]
   # These are currently "raw" dependencies. They haven't been resolved yet.
-  dependencies: list[Dependency]
+  dependencies: list[DependencyDescription]
+
+  def primaryFile(self) -> ProjectFile:
+    for file in self.files:
+      if file.isPrimary:
+        return file
+    assert False, "unreachable"
 
 def _projectVersionFromJson(versionJson) -> ProjectVersion:
   return ProjectVersion(
@@ -73,24 +80,35 @@ def queryList(itemList: list[str]) -> str:
 def _isListed(versionJson) -> bool:
   return versionJson["status"] == "listed"
 
-@dataclass
-class VersionsResponse:
-  rawResponse: Any
-  versions: list[ProjectVersion]
+def getLoaderNameForItemType(itemType: ItemType) -> str | None:
+  match itemType:
+    case ItemType.MOD | ItemType.PLUGIN:  return "fabric"
+    case ItemType.SHADER:                 return "iris"
+    case ItemType.RESOURCE_PACK:          return None
+    case ItemType.DATA_PACK:              return "datapack"
 
-def getMatchingVersions(projectName: str, desiredVersions: list[str]) -> VersionsResponse:
+def getMatchingVersions(
+  itemType: ItemType,
+  projectName: str,
+  desiredVersions: list[str]
+) -> list[ProjectVersion]:
   url = f"{MODRINTH_API_BASE}/project/{projectName}/version"
+  params = {
+    "game_versions": queryList(desiredVersions)
+  }
+
+  loader = getLoaderNameForItemType(itemType)
+  if loader is not None:
+    params["loaders"] = queryList([loader])
 
   # https://docs.modrinth.com/api-spec#tag/versions/operation/getProjectVersions
   response = list(filter(
     _isListed,
-    requests.get(url, params={
-      "loaders": queryList(["fabric"]),
-      "game_versions": queryList(desiredVersions)
-    }).json()
+    requests.get(url, params=params).json()
   ))
 
-  return VersionsResponse(
-    rawResponse=response,
-    versions=[_projectVersionFromJson(versionJson) for versionJson in response]
-  )
+  return [_projectVersionFromJson(versionJson) for versionJson in response]
+
+def resolveDependency(depDescription: DependencyDescription) -> ProjectVersion:
+  url = f"{MODRINTH_API_BASE}/project/{depDescription.projectId}/version/{depDescription.versionId}"
+  return _projectVersionFromJson(requests.get(url).json())
