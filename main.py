@@ -1,59 +1,41 @@
-import requests
-from bs4 import BeautifulSoup
-from enum import Enum
+import sys
+import json
+from ModrinthScraper import ItemType, findDownloadUrl
+from LinkExtraction import extractLinks, urlToComponents
+from ModrinthApi import getMatchingVersions
 
-class ItemType(Enum):
-  MOD = 1
-  RESOURCE_PACK = 2
-  SHADER = 3
-  PLUGIN = 4
+import logging
 
-# TODO: Transition to using the Modrinth API where possible.
-def modrinthVersionsPage(itemType: str, name: str) -> str:
-  return f"https://modrinth.com/{itemType}/{name}/versions"
+logging.basicConfig(level=logging.DEBUG)
 
-def getPluginPage(pluginName: str, versionString: str) -> str:
-  return requests.get(modrinthVersionsPage("plugin", pluginName), params={
-    "g": versionString,
-    "l": "fabric"
-  }).text
+# testValid = findDownloadUrl(ItemType.MOD, "nvidium", "1.20.3")
+# testInvalid = findDownloadUrl(ItemType.MOD, "nvidium", "1.20.12")
+# print(testValid)
+# print(testInvalid)
 
-def getShaderPage(shaderName: str, versionString: str) -> str:
-  return requests.get(modrinthVersionsPage("shader", shaderName), params={
-    "g": versionString,
-    "l": "iris"
-  }).text
+def itemTypeFromString(inType: str) -> ItemType | None:
+  match inType:
+    case "mod": return ItemType.MOD
+    case "plugin": return ItemType.PLUGIN
+    case "resourcepack": return ItemType.RESOURCE_PACK
+    case "shader": return ItemType.SHADER
+    case _: return None
 
-def getResourcePackPage(packName: str, versionString: str) -> str:
-  return requests.get(modrinthVersionsPage("resourcepack", packName), params={
-    "g": versionString
-  }).text
+if __name__ == "__main__":
+  DESIRED_VERSIONS = ["1.20.1", "1.19.4"]
 
-def getModPage(modName: str, versionString: str) -> str:
-  return requests.get(modrinthVersionsPage("mod", modName), params={
-    "g": versionString,
-    "l": "fabric"
-  }).text
+  if len(sys.argv) < 2:
+    print("Missing file path argument.", file=sys.stderr)
+    exit(1)
 
-def pageContents(itemType: ItemType, itemName: str, version: str) -> str:
-  match itemType:
-    case ItemType.MOD:            return getModPage(itemName, version)
-    case ItemType.RESOURCE_PACK:  return getResourcePackPage(itemName, version)
-    case ItemType.SHADER:         return getShaderPage(itemName, version)
-    case ItemType.PLUGIN:         return getPluginPage(itemName, version)
-
-def findDownloadUrl(itemType: ItemType, modName: str, version: str) -> str | None:
-  pageHtml = BeautifulSoup(pageContents(itemType, modName, version), features="html.parser")
-  versionsTable = pageHtml.find(id="all-versions")
-
-  if versionsTable is None:
-    return None
-  else:
-    linkTag = versionsTable.find("a", class_="download-button")
-    return linkTag.attrs["href"]
-
-testValid = findDownloadUrl(ItemType.MOD, "nvidium", "1.20.3")
-testInvalid = findDownloadUrl(ItemType.MOD, "nvidium", "1.20.12")
-
-print(testValid)
-print(testInvalid)
+  for link in extractLinks(sys.argv[1]):
+    components = urlToComponents(link)
+    
+    if components is None:
+      print("Not a valid URL")
+    else:
+      itemType = itemTypeFromString(components.paths[0])
+      response = getMatchingVersions(components.paths[1], DESIRED_VERSIONS)
+      # jsonVersion = json.dumps(response.rawResponse)
+      # print(jsonVersion)
+      print(response.versions)
