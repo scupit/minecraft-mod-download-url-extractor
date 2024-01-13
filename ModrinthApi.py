@@ -1,4 +1,4 @@
-import requests
+from aiohttp import ClientSession
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, assert_never
@@ -87,28 +87,39 @@ def getLoaderNameForItemType(itemType: ItemType) -> str | None:
     case ItemType.RESOURCE_PACK:          return None
     case ItemType.DATA_PACK:              return "datapack"
 
-def getMatchingVersions(
-  itemType: ItemType,
-  projectName: str,
-  desiredVersions: list[str]
-) -> list[ProjectVersion]:
-  url = f"{MODRINTH_API_BASE}/project/{projectName}/version"
-  params = {
-    "game_versions": queryList(desiredVersions)
-  }
+class ModrinthApi:
+  _httpSession: ClientSession
 
-  loader = getLoaderNameForItemType(itemType)
-  if loader is not None:
-    params["loaders"] = queryList([loader])
+  def __init__(self, session: ClientSession):
+    self._httpSession = session
 
-  # https://docs.modrinth.com/api-spec#tag/versions/operation/getProjectVersions
-  response = list(filter(
-    _isListed,
-    requests.get(url, params=params).json()
-  ))
+  async def _getJson(self, url: str, params: dict[str, str]) -> Any:
+    response = await self._httpSession.get(url, params=params)
+    return await response.json()
+  
+  async def getMatchingVersions(
+    self,
+    itemType: ItemType,
+    projectName: str,
+    desiredVersions: list[str]
+  ) -> list[ProjectVersion]:
+    url = f"{MODRINTH_API_BASE}/project/{projectName}/version"
+    params = {
+      "game_versions": queryList(desiredVersions)
+    }
 
-  return [_projectVersionFromJson(versionJson) for versionJson in response]
+    loader = getLoaderNameForItemType(itemType)
+    if loader is not None:
+      params["loaders"] = queryList([loader])
 
-def resolveDependency(depDescription: DependencyDescription) -> ProjectVersion:
-  url = f"{MODRINTH_API_BASE}/project/{depDescription.projectId}/version/{depDescription.versionId}"
-  return _projectVersionFromJson(requests.get(url).json())
+    # https://docs.modrinth.com/api-spec#tag/versions/operation/getProjectVersions
+    response = list(filter(
+      _isListed,
+      await self._getJson(url, params)
+    ))
+
+    return [_projectVersionFromJson(versionJson) for versionJson in response]
+
+  async def resolveDependency(self, depDescription: DependencyDescription) -> ProjectVersion:
+    url = f"{MODRINTH_API_BASE}/project/{depDescription.projectId}/version/{depDescription.versionId}"
+    return _projectVersionFromJson(await self._getJson(url, {}))

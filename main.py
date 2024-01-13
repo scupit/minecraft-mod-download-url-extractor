@@ -1,9 +1,11 @@
+import asyncio
+import aiohttp
 import sys
 import json
 from ItemType import ItemType
 from ModrinthScraper import findDownloadUrl
 from LinkExtraction import extractLinks, urlToComponents, UrlComponents
-from ModrinthApi import getMatchingVersions, ProjectVersion
+from ModrinthApi import ProjectVersion, ModrinthApi
 
 import logging
 
@@ -13,6 +15,8 @@ import logging
 # testInvalid = findDownloadUrl(ItemType.MOD, "nvidium", "1.20.12")
 # print(testValid)
 # print(testInvalid)
+
+DESIRED_VERSIONS = ["1.20.1", "1.19.4"]
 
 def itemTypeFromString(inType: str) -> ItemType | None:
   match inType:
@@ -32,7 +36,7 @@ def findMostRecentMatching(versionString: str, versionList: list[ProjectVersion]
 
   return matching[-1] if len(matching) > 0 else None
 
-def printInfoFromComponents(components: UrlComponents):
+async def printInfoFromComponents(api: ModrinthApi, components: UrlComponents):
   itemType = itemTypeFromString(components.paths[0])
 
   if itemType is None:
@@ -41,7 +45,7 @@ def printInfoFromComponents(components: UrlComponents):
 
   projectName = components.paths[1]
   checkingVersion = DESIRED_VERSIONS[0]
-  versions = getMatchingVersions(itemType, projectName, DESIRED_VERSIONS)
+  versions = await api.getMatchingVersions(itemType, projectName, DESIRED_VERSIONS)
   bestMatch = findMostRecentMatching(checkingVersion, versions)
 
   if bestMatch == None:
@@ -49,20 +53,26 @@ def printInfoFromComponents(components: UrlComponents):
   else:
     print(bestMatch.primaryFile().url)
 
-
-if __name__ == "__main__":
-  DESIRED_VERSIONS = ["1.20.1", "1.19.4"]
-
+async def main():
   if len(sys.argv) < 2:
     print("Missing file path argument.", file=sys.stderr)
     exit(1)
+  
+  async with aiohttp.ClientSession() as session:
+    api = ModrinthApi(session)
+    results = []
 
-  for link in extractLinks(sys.argv[1]):
-    components = urlToComponents(link)
+    for link in extractLinks(sys.argv[1]):
+      components = urlToComponents(link)
 
-    if components is None:
-      print("Not a valid URL", file=sys.stderr)
-    elif components.domain != "modrinth.com":
-      print("Not a Modrinth URL", file=sys.stderr)
-    else:
-      printInfoFromComponents(components)
+      if components is None:
+        print("Not a valid URL", file=sys.stderr)
+      elif components.domain != "modrinth.com":
+        print("Not a Modrinth URL", file=sys.stderr)
+      else:
+        results.append(printInfoFromComponents(api, components))
+    
+    results = await asyncio.gather(*results)
+
+if __name__ == "__main__":
+  asyncio.run(main())
