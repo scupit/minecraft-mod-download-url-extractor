@@ -93,6 +93,16 @@ class ModrinthApi:
   def __init__(self, session: ClientSession):
     self._httpSession = session
 
+  @staticmethod
+  def itemTypeFromString(inType: str) -> ItemType | None:
+    match inType:
+      case "mod":           return ItemType.MOD
+      case "plugin":        return ItemType.PLUGIN
+      case "resourcepack":  return ItemType.RESOURCE_PACK
+      case "shader":        return ItemType.SHADER
+      case "datapack":      return ItemType.DATA_PACK
+      case _:               return None
+
   async def _getJson(self, url: str, params: dict[str, str]) -> Any:
     response = await self._httpSession.get(url, params=params)
     return await response.json()

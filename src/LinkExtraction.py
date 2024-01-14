@@ -13,6 +13,18 @@ class UrlComponents:
   paths: list[str]
   query: dict[str, str]
 
+  def wholeUrl(self) -> str:
+    path = f"{self.protocol}://{self.domain}"
+
+    if len(self.paths) > 0:
+      path += "/" + "/".join(self.paths)
+    
+    if len(self.query) > 0:
+      path += "?"
+      path += "&".join([f"{key}={value}" for key, value in self.query.items()])
+
+    return path
+
 def onlyNonEmpty(strList: list[str]) -> list[str]:
   result = []
   for string in strList:

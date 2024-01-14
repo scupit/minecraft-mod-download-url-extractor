@@ -2,30 +2,35 @@ import asyncio
 import aiohttp
 import sys
 import json
+from enum import Enum
+from dataclasses import dataclass
+
 from ItemType import ItemType
-from ModrinthScraper import findDownloadUrl
+from typing import Any, Coroutine
+from CurseForgeScraper import CurseForgeScraper
 from LinkExtraction import extractLinks, urlToComponents, UrlComponents
 from ModrinthApi import ProjectVersion, ModrinthApi
+from Helpers import printStderr
+from playwright.async_api import async_playwright, Browser
 
 import logging
 
-# logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.DEBUG)
 
 # testValid = findDownloadUrl(ItemType.MOD, "nvidium", "1.20.3")
 # testInvalid = findDownloadUrl(ItemType.MOD, "nvidium", "1.20.12")
 # print(testValid)
 # print(testInvalid)
 
-DESIRED_VERSIONS = ["1.20.1", "1.19.4"]
+class MatchResultType(Enum):
+  UNKNOWN_PROJECT_TYPE = 1
+  NO_MATCH = 2
+  MATCH_FOUND = 3
 
-def itemTypeFromString(inType: str) -> ItemType | None:
-  match inType:
-    case "mod":           return ItemType.MOD
-    case "plugin":        return ItemType.PLUGIN
-    case "resourcepack":  return ItemType.RESOURCE_PACK
-    case "shader":        return ItemType.SHADER
-    case "datapack":      return ItemType.DATA_PACK
-    case _:               return None
+@dataclass
+class MatchSearchResult:
+  resultType: MatchResultType
+  message: str
 
 def findMostRecentMatching(versionString: str, versionList: list[ProjectVersion]) -> ProjectVersion | None:
   matching = list(filter(
@@ -36,43 +41,113 @@ def findMostRecentMatching(versionString: str, versionList: list[ProjectVersion]
 
   return matching[-1] if len(matching) > 0 else None
 
-async def printInfoFromComponents(api: ModrinthApi, components: UrlComponents):
-  itemType = itemTypeFromString(components.paths[0])
+async def getModrinthInfoFromComponents(
+  api: ModrinthApi,
+  components: UrlComponents,
+  versionSearching: str
+) -> MatchSearchResult:
+  itemType = ModrinthApi.itemTypeFromString(components.paths[0])
 
   if itemType is None:
-    print(f"Unable to determine item type using string \"{components.paths[0]}\"")
-    return
+    return MatchSearchResult(
+      MatchResultType.UNKNOWN_PROJECT_TYPE,
+      components.wholeUrl()
+    )
 
   projectName = components.paths[1]
-  checkingVersion = DESIRED_VERSIONS[0]
-  versions = await api.getMatchingVersions(itemType, projectName, DESIRED_VERSIONS)
-  bestMatch = findMostRecentMatching(checkingVersion, versions)
+  versions = await api.getMatchingVersions(itemType, projectName, [versionSearching])
+  bestMatch = findMostRecentMatching(versionSearching, versions)
 
   if bestMatch == None:
-    print(f"No match for {projectName} - {checkingVersion}", file=sys.stderr)
+    return MatchSearchResult(
+      MatchResultType.NO_MATCH,
+      f"No match for {projectName} - {versionSearching}"
+    )
   else:
-    print(bestMatch.primaryFile().url)
+    return MatchSearchResult(
+      MatchResultType.MATCH_FOUND,
+      bestMatch.primaryFile().url
+    )
 
-async def main():
+async def resolveCurseForgeResults(coroutineList: list) -> list[str]:
+  results: list[str] = []
+  for coro in coroutineList:
+    results.append(await coro)
+    await asyncio.sleep(CurseForgeScraper.CRAWL_DELAY.seconds)
+  return results
+
+async def setup():
+  async with async_playwright() as playwright:
+    browser = await playwright.firefox.launch()
+    async with aiohttp.ClientSession() as session:
+      await main(browser, session)
+    await browser.close()
+
+async def main(browser: Browser, session: aiohttp.ClientSession):
+  # DESIRED_VERSIONS = ["1.20.1", "1.19.4"]
+  VERSION_SEARCHING: str = "1.20.1"
+
   if len(sys.argv) < 2:
-    print("Missing file path argument.", file=sys.stderr)
+    printStderr("Missing file path argument.")
     exit(1)
   
-  async with aiohttp.ClientSession() as session:
-    api = ModrinthApi(session)
-    results = []
+  modrinthApi = ModrinthApi(session)
+  curseForgeScraper = CurseForgeScraper(browser)
+  
+  maybeInvalid: list[str] = [ ]
+  needsManualDownload: list[str] = [ ]
+  pendingModrinthResults: list[Coroutine[Any, Any, MatchSearchResult]] = [ ]
+  pendingCurseForgeResults = [ ]
 
-    for link in extractLinks(sys.argv[1]):
-      components = urlToComponents(link)
+  for link in extractLinks(sys.argv[1]):
+    components = urlToComponents(link)
 
-      if components is None:
-        print("Not a valid URL", file=sys.stderr)
-      elif components.domain != "modrinth.com":
-        print("Not a Modrinth URL", file=sys.stderr)
-      else:
-        results.append(printInfoFromComponents(api, components))
-    
-    results = await asyncio.gather(*results)
+    if components is None:
+      printStderr(f"Invalid URL: \"{link}\"")
+      continue
+
+    match components.domain:
+      case "modrinth.com":
+        pendingModrinthResults.append(getModrinthInfoFromComponents(modrinthApi, components, VERSION_SEARCHING))
+      case "www.curseforge.com":
+        itemType = CurseForgeScraper.itemTypeFromString(components.paths[1])
+
+        if itemType is None:
+          maybeInvalid.append(link)
+        elif not CurseForgeScraper.isItemTypeSupported(itemType):
+          needsManualDownload.append(link)
+        else:
+          projectName = components.paths[2]
+          pendingCurseForgeResults.append(curseForgeScraper.getLinkFor(itemType, projectName, VERSION_SEARCHING))
+
+  printStderr("Gathering Download URLs...")
+
+  modrinthResults: list[MatchSearchResult]
+  curseForgeResults: list[str]
+
+  modrinthResults, curseForgeResults = await asyncio.gather(
+    asyncio.gather(*pendingModrinthResults),
+    resolveCurseForgeResults(pendingCurseForgeResults)
+  )
+
+  for result in modrinthResults:
+    match result.resultType:
+      case MatchResultType.UNKNOWN_PROJECT_TYPE:
+        printStderr(f"Invalid project type for URL \"{result.message}\"")
+      case MatchResultType.NO_MATCH:
+        print(result.message)
+      case MatchResultType.MATCH_FOUND:
+        print(result.message)
+
+  for result in curseForgeResults:
+    print(result)
+  
+  for result in needsManualDownload:
+    print(result)
+  
+  for result in maybeInvalid:
+    printStderr(f"MAYBE INVALID: {result}")
+
 
 if __name__ == "__main__":
-  asyncio.run(main())
+  asyncio.run(setup())
