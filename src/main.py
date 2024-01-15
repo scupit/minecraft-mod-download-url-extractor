@@ -12,6 +12,7 @@ from LinkExtraction import extractLinks, urlToComponents, UrlComponents
 from ModrinthApi import ProjectVersion, ModrinthApi
 from Helpers import printStderr
 from playwright.async_api import async_playwright, Browser
+from UrlCache import UrlCache
 
 import logging
 
@@ -43,10 +44,15 @@ def findMostRecentMatching(versionString: str, versionList: list[ProjectVersion]
   return matching[-1] if len(matching) > 0 else None
 
 async def getModrinthInfoFromComponents(
+  urlCache: UrlCache,
   api: ModrinthApi,
   components: UrlComponents,
   versionSearching: str
 ) -> MatchSearchResult:
+  # TODO: Only process if the link wasn't already processed. Need to do that in other places too.
+  # if urlCache.hasUrl(components):
+  #   return
+
   itemType = ModrinthApi.itemTypeFromString(components.paths[0])
 
   if itemType is None:
@@ -62,7 +68,7 @@ async def getModrinthInfoFromComponents(
   if bestMatch == None:
     return MatchSearchResult(
       MatchResultType.NO_MATCH,
-      f"No match for {projectName} - {versionSearching}"
+      f"NO MATCH: {projectName} @ {versionSearching}"
     )
   else:
     return MatchSearchResult(
@@ -111,7 +117,8 @@ async def setup():
 
 async def main(browser: Browser, session: aiohttp.ClientSession):
   # DESIRED_VERSIONS = ["1.20.1", "1.19.4"]
-  VERSION_SEARCHING: str = "1.20.1"
+  # VERSION_SEARCHING: str = "1.20.1"
+  VERSION_SEARCHING: str = "1.19.2"
 
   if len(sys.argv) < 2:
     printStderr("Missing file path argument.")
@@ -119,6 +126,7 @@ async def main(browser: Browser, session: aiohttp.ClientSession):
   
   modrinthApi = ModrinthApi(session)
   curseForgeScraper = CurseForgeScraper(browser)
+  urlCache = UrlCache()
   
   maybeInvalid: list[str] = [ ]
   needsManualDownload: list[str] = [ ]
@@ -132,9 +140,14 @@ async def main(browser: Browser, session: aiohttp.ClientSession):
       printStderr(f"Invalid URL: \"{link}\"")
       continue
 
+    if urlCache.hasUrl(components):
+      continue
+      
+    urlCache.insert(components)
+
     match components.domain:
       case "modrinth.com":
-        pendingModrinthResults.append(getModrinthInfoFromComponents(modrinthApi, components, VERSION_SEARCHING))
+        pendingModrinthResults.append(getModrinthInfoFromComponents(urlCache, modrinthApi, components, VERSION_SEARCHING))
       case "www.curseforge.com" | "legacy.curseforge.com":
         itemType = CurseForgeScraper.itemTypeFromString(components.paths[1])
 

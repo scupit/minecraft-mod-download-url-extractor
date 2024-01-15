@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, assert_never
 from ItemType import ItemType
+from Helpers import printStderr
 
 MODRINTH_API_BASE: str = "https://api.modrinth.com/v2"
 
@@ -57,7 +58,8 @@ class ProjectVersion:
     for file in self.files:
       if file.isPrimary:
         return file
-    assert False, "unreachable"
+    # assert False, "unreachable"
+    return self.files[0]
 
 def _projectVersionFromJson(versionJson) -> ProjectVersion:
   return ProjectVersion(
@@ -71,8 +73,7 @@ def _projectVersionFromJson(versionJson) -> ProjectVersion:
 
 def queryList(itemList: list[str]) -> str:
   quotedItems = map(
-    # lambda s : f"\"{s}\"",
-    lambda s : f"{s}",
+    lambda s : f"\"{s}\"",
     itemList
   )
   joined = ",".join(quotedItems)
