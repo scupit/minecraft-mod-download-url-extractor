@@ -26,6 +26,7 @@ class MatchResultType(Enum):
   UNKNOWN_PROJECT_TYPE = 1
   NO_MATCH = 2
   MATCH_FOUND = 3
+  NEEDS_MANUAL_DOWNLOAD = 4
 
 @dataclass
 class MatchSearchResult:
@@ -69,8 +70,33 @@ async def getModrinthInfoFromComponents(
       bestMatch.primaryFile().url
     )
 
-async def resolveCurseForgeResults(coroutineList: list) -> list[str]:
-  results: list[str] = []
+async def getCurseForgeInfoFromComponents(
+  scraper: CurseForgeScraper,
+  itemType: ItemType,
+  components: UrlComponents,
+  versionSearching: str
+) -> MatchSearchResult:
+  projectName = components.paths[2]
+  result: str | None = await scraper.getLinkFor(itemType, projectName, versionSearching)
+
+  if result is None:
+    return MatchSearchResult(
+      MatchResultType.NEEDS_MANUAL_DOWNLOAD,
+      components.wholeUrl()
+    )
+  
+  # NOTE: Some compatibility datapacks (called "texture-packs" in curseforge urls...)
+  # are meant for adding compatibility between mods in certain loaders. Those might need
+  # manual checking, but for now I don't have a way to determine which packs are configured
+  # that way. Those packs are fairly uncommon though, so it shouldn't cause too many issues
+  # for now.
+  return MatchSearchResult(
+    MatchResultType.MATCH_FOUND,
+    result
+  )
+
+async def resolveCurseForgeResults(coroutineList: list) -> list[MatchSearchResult]:
+  results: list[MatchSearchResult] = []
   for coro in coroutineList:
     results.append(await coro)
     await asyncio.sleep(CurseForgeScraper.CRAWL_DELAY.seconds)
@@ -97,7 +123,7 @@ async def main(browser: Browser, session: aiohttp.ClientSession):
   maybeInvalid: list[str] = [ ]
   needsManualDownload: list[str] = [ ]
   pendingModrinthResults: list[Coroutine[Any, Any, MatchSearchResult]] = [ ]
-  pendingCurseForgeResults = [ ]
+  pendingCurseForgeResults: list[Coroutine[Any, Any, MatchSearchResult]] = [ ]
 
   for link in extractLinks(sys.argv[1]):
     components = urlToComponents(link)
@@ -109,7 +135,7 @@ async def main(browser: Browser, session: aiohttp.ClientSession):
     match components.domain:
       case "modrinth.com":
         pendingModrinthResults.append(getModrinthInfoFromComponents(modrinthApi, components, VERSION_SEARCHING))
-      case "www.curseforge.com":
+      case "www.curseforge.com" | "legacy.curseforge.com":
         itemType = CurseForgeScraper.itemTypeFromString(components.paths[1])
 
         if itemType is None:
@@ -117,13 +143,12 @@ async def main(browser: Browser, session: aiohttp.ClientSession):
         elif not CurseForgeScraper.isItemTypeSupported(itemType):
           needsManualDownload.append(link)
         else:
-          projectName = components.paths[2]
-          pendingCurseForgeResults.append(curseForgeScraper.getLinkFor(itemType, projectName, VERSION_SEARCHING))
+          pendingCurseForgeResults.append(getCurseForgeInfoFromComponents(curseForgeScraper, itemType, components, VERSION_SEARCHING))
 
   printStderr("Gathering Download URLs...")
 
   modrinthResults: list[MatchSearchResult]
-  curseForgeResults: list[str]
+  curseForgeResults: list[MatchSearchResult]
 
   modrinthResults, curseForgeResults = await asyncio.gather(
     asyncio.gather(*pendingModrinthResults),
@@ -140,14 +165,17 @@ async def main(browser: Browser, session: aiohttp.ClientSession):
         print(result.message)
 
   for result in curseForgeResults:
-    print(result)
+    match result.resultType:
+      case MatchResultType.MATCH_FOUND:
+        print(result.message)
+      case MatchResultType.NEEDS_MANUAL_DOWNLOAD:
+        needsManualDownload.append(result.message)
   
   for result in needsManualDownload:
-    print(result)
+    printStderr(f"NEEDS MANUAL DOWNLOAD: {result}")
   
   for result in maybeInvalid:
     printStderr(f"MAYBE INVALID: {result}")
-
 
 if __name__ == "__main__":
   asyncio.run(setup())

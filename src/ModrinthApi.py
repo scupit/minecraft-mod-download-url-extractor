@@ -71,7 +71,8 @@ def _projectVersionFromJson(versionJson) -> ProjectVersion:
 
 def queryList(itemList: list[str]) -> str:
   quotedItems = map(
-    lambda s : f"\"{s}\"",
+    # lambda s : f"\"{s}\"",
+    lambda s : f"{s}",
     itemList
   )
   joined = ",".join(quotedItems)
