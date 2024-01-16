@@ -14,7 +14,7 @@ from ModrinthApi import ProjectVersion, ModrinthApi
 from Helpers import printStderr
 from playwright.async_api import async_playwright, Browser, BrowserContext
 from UrlCache import UrlCache
-from UrlResultOutput import UrlResultOutput
+from UrlResultOutputWriter import UrlResultOutputWriter
 
 import logging
 
@@ -134,7 +134,7 @@ async def main(
   modrinthApi = ModrinthApi(session)
   curseForgeScraper = CurseForgeScraper(browser)
   urlCache = UrlCache()
-  outputWriter = UrlResultOutput(args.outFilePrefix)
+  outputWriter = UrlResultOutputWriter(args.outFilePrefix)
   
   maybeInvalid: list[str] = [ ]
   needsManualDownload: list[str] = [ ]
@@ -145,7 +145,7 @@ async def main(
     components = urlToComponents(link)
 
     if components is None:
-      outputWriter.outputFail(f"Invalid URL: \"{link}\"")
+      outputWriter.writeFail(f"Invalid URL: \"{link}\"")
       continue
 
     if urlCache.hasUrl(components):
@@ -192,24 +192,24 @@ async def main(
   for result in modrinthResults:
     match result.resultType:
       case MatchResultType.UNKNOWN_PROJECT_TYPE:
-        outputWriter.outputFail(f"Invalid project type for URL \"{result.message}\"")
+        outputWriter.writeFail(f"Invalid project type for URL \"{result.message}\"")
       case MatchResultType.NO_MATCH:
-        outputWriter.outputFail(result.message)
+        outputWriter.writeFail(result.message)
       case MatchResultType.MATCH_FOUND:
-        outputWriter.outputSuccess(result.message)
+        outputWriter.writeSuccess(result.message)
 
   for result in curseForgeResults:
     match result.resultType:
       case MatchResultType.MATCH_FOUND:
-        outputWriter.outputSuccess(result.message)
+        outputWriter.writeSuccess(result.message)
       case MatchResultType.NEEDS_MANUAL_DOWNLOAD:
         needsManualDownload.append(result.message)
   
   for result in needsManualDownload:
-    outputWriter.outputFail(f"NEEDS MANUAL DOWNLOAD: {result}")
+    outputWriter.writeFail(f"NEEDS MANUAL DOWNLOAD: {result}")
   
   for result in maybeInvalid:
-    outputWriter.outputFail(f"MAYBE INVALID: {result}")
+    outputWriter.writeFail(f"MAYBE INVALID: {result}")
 
 if __name__ == "__main__":
   parser = argparse.ArgumentParser(
