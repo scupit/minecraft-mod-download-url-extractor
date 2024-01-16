@@ -189,6 +189,9 @@ async def main(
 
   printStderr("--------------------------------------------------------------------------------\n")
 
+  if outputWriter.isUsingFiles():
+    printStderr("(Output written to files)")
+
   for result in modrinthResults:
     match result.resultType:
       case MatchResultType.UNKNOWN_PROJECT_TYPE:
@@ -226,5 +229,5 @@ if __name__ == "__main__":
   asyncio.run(setup(ProgramArgs(
     desiredVersion=args.desired_version,
     fileNameReading=args.file_reading,
-    outFilePrefix=args.out_name
+    outFilePrefix=args.out_prefix
   )))

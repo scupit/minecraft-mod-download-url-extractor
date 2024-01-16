@@ -35,3 +35,6 @@ class UrlResultOutputWriter:
 
   def writeFail(self, string: str):
     print(string, file=self._failFile())
+  
+  def isUsingFiles(self) -> bool:
+    return self._successFileOut is not None and self._failFileOut is not None
