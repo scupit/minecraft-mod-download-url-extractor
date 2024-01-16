@@ -7,12 +7,12 @@ from enum import Enum
 from dataclasses import dataclass
 
 from ItemType import ItemType
-from typing import Any, Coroutine
+from typing import Any, Coroutine, AsyncGenerator
 from CurseForgeScraper import CurseForgeScraper
 from LinkExtraction import extractLinks, urlToComponents, UrlComponents
 from ModrinthApi import ProjectVersion, ModrinthApi
 from Helpers import printStderr
-from playwright.async_api import async_playwright, Browser
+from playwright.async_api import async_playwright, Browser, BrowserContext
 from UrlCache import UrlCache
 
 import logging
@@ -107,22 +107,24 @@ async def getCurseForgeInfoFromComponents(
     result
   )
 
-async def resolveCurseForgeResults(coroutineList: list) -> list[MatchSearchResult]:
-  results: list[MatchSearchResult] = []
+async def resolveCurseForgeResults(coroutineList: list) -> AsyncGenerator[MatchSearchResult, Any]:
   for coro in coroutineList:
-    results.append(await coro)
+    yield await coro
     await asyncio.sleep(CurseForgeScraper.CRAWL_DELAY.seconds)
-  return results
 
 async def setup(args: ProgramArgs):
   async with async_playwright() as playwright:
     browser = await playwright.firefox.launch()
+    context = await browser.new_context(
+      viewport={"width": 1920, "height": 1080}
+    )
+
     async with aiohttp.ClientSession() as session:
-      await main(browser, session, args)
+      await main(context, session, args)
     await browser.close()
 
 async def main(
-  browser: Browser,
+  browser: BrowserContext,
   session: aiohttp.ClientSession,
   args: ProgramArgs
 ):
@@ -162,15 +164,28 @@ async def main(
         else:
           pendingCurseForgeResults.append(getCurseForgeInfoFromComponents(curseForgeScraper, itemType, components, VERSION_SEARCHING))
 
-  printStderr("Gathering Download URLs...")
+  printStderr("Resolving Modrinth URLs...")
+  modrinthResults = await asyncio.gather(*pendingModrinthResults)
 
-  modrinthResults: list[MatchSearchResult]
-  curseForgeResults: list[MatchSearchResult]
+  printStderr("Resolving CurseForge URLs...")
+  curseForgeResults: list[MatchSearchResult] = []
 
-  modrinthResults, curseForgeResults = await asyncio.gather(
-    asyncio.gather(*pendingModrinthResults),
-    resolveCurseForgeResults(pendingCurseForgeResults)
-  )
+  counter = 0
+  async for result in resolveCurseForgeResults(pendingCurseForgeResults):
+    counter += 1
+    printStderr(f"Resolved CurseForge URL {counter}/{len(pendingCurseForgeResults)}")
+    curseForgeResults.append(result)
+
+  # printStderr("Gathering Download URLs...")
+  # modrinthResults: list[MatchSearchResult]
+  # curseForgeResults: list[MatchSearchResult]
+
+  # modrinthResults, curseForgeResults = await asyncio.gather(
+  #   asyncio.gather(*pendingModrinthResults),
+  #   resolveCurseForgeResults(pendingCurseForgeResults)
+  # )
+
+  printStderr("--------------------------------------------------------------------------------\n")
 
   for result in modrinthResults:
     match result.resultType:
@@ -204,7 +219,7 @@ if __name__ == "__main__":
   parser.add_argument("file_reading")
   parser.add_argument("-o", "--out-name")
   args = parser.parse_args()
-  printStderr(str(args))
+  # printStderr(str(args))
 
   asyncio.run(setup(ProgramArgs(
     desiredVersion=args.desired_version,

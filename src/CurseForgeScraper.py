@@ -2,7 +2,7 @@ import asyncio
 from aiohttp import ClientSession
 from ItemType import ItemType
 from LinkExtraction import UrlComponents, urlToComponents
-from playwright.async_api import Browser
+from playwright.async_api import BrowserContext
 from datetime import timedelta
 from bs4 import BeautifulSoup, Tag
 
@@ -14,9 +14,9 @@ def _curseForgeVersionsPage(itemType: str, name: str) -> str:
 class CurseForgeScraper:
   # Crawl delay specified here: https://curseforge.com/robots.txt
   CRAWL_DELAY = timedelta(seconds=1)
-  _browser: Browser
+  _browser: BrowserContext
 
-  def __init__(self, browser: Browser):
+  def __init__(self, browser: BrowserContext):
     self._browser = browser
 
   async def _requestPageHtml(self, url: str, params: dict[str, str]) -> str:
@@ -25,7 +25,7 @@ class CurseForgeScraper:
     components.query = params
     # print(f"Scraping page at {components.wholeUrl()}")
 
-    page = await self._browser.new_page(viewport={"width": 1920, "height": 1080})
+    page = await self._browser.new_page()
     await page.goto(components.wholeUrl(), wait_until="load")
 
     # This is a hack. The table takes an extra bit of time to populate.
