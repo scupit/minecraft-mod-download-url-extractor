@@ -14,6 +14,7 @@ from ModrinthApi import ProjectVersion, ModrinthApi
 from Helpers import printStderr
 from playwright.async_api import async_playwright, Browser, BrowserContext
 from UrlCache import UrlCache
+from UrlResultOutput import UrlResultOutput
 
 import logging
 
@@ -28,7 +29,7 @@ logging.basicConfig(level=logging.DEBUG)
 class ProgramArgs:
   desiredVersion: str
   fileNameReading: str
-  outFileSuffix: str | None
+  outFilePrefix: str | None
 
 class MatchResultType(Enum):
   UNKNOWN_PROJECT_TYPE = 1
@@ -133,6 +134,7 @@ async def main(
   modrinthApi = ModrinthApi(session)
   curseForgeScraper = CurseForgeScraper(browser)
   urlCache = UrlCache()
+  outputWriter = UrlResultOutput(args.outFilePrefix)
   
   maybeInvalid: list[str] = [ ]
   needsManualDownload: list[str] = [ ]
@@ -143,7 +145,7 @@ async def main(
     components = urlToComponents(link)
 
     if components is None:
-      printStderr(f"Invalid URL: \"{link}\"")
+      outputWriter.outputFail(f"Invalid URL: \"{link}\"")
       continue
 
     if urlCache.hasUrl(components):
@@ -190,39 +192,39 @@ async def main(
   for result in modrinthResults:
     match result.resultType:
       case MatchResultType.UNKNOWN_PROJECT_TYPE:
-        printStderr(f"Invalid project type for URL \"{result.message}\"")
+        outputWriter.outputFail(f"Invalid project type for URL \"{result.message}\"")
       case MatchResultType.NO_MATCH:
-        print(result.message)
+        outputWriter.outputFail(result.message)
       case MatchResultType.MATCH_FOUND:
-        print(result.message)
+        outputWriter.outputSuccess(result.message)
 
   for result in curseForgeResults:
     match result.resultType:
       case MatchResultType.MATCH_FOUND:
-        print(result.message)
+        outputWriter.outputSuccess(result.message)
       case MatchResultType.NEEDS_MANUAL_DOWNLOAD:
         needsManualDownload.append(result.message)
   
   for result in needsManualDownload:
-    printStderr(f"NEEDS MANUAL DOWNLOAD: {result}")
+    outputWriter.outputFail(f"NEEDS MANUAL DOWNLOAD: {result}")
   
   for result in maybeInvalid:
-    printStderr(f"MAYBE INVALID: {result}")
+    outputWriter.outputFail(f"MAYBE INVALID: {result}")
 
 if __name__ == "__main__":
   parser = argparse.ArgumentParser(
-    prog="Mod Download Url Extractor",
+    prog="download-url-extractor",
     description="Fetches download URLs for minecraft mods, texture packs, etc. given a list of markdown-formatted links."
   )
 
   parser.add_argument("desired_version")
   parser.add_argument("file_reading")
-  parser.add_argument("-o", "--out-name")
+  parser.add_argument("-o", "--out-prefix")
   args = parser.parse_args()
   # printStderr(str(args))
 
   asyncio.run(setup(ProgramArgs(
     desiredVersion=args.desired_version,
     fileNameReading=args.file_reading,
-    outFileSuffix=args.out_name
+    outFilePrefix=args.out_name
   )))
