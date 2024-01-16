@@ -1,3 +1,4 @@
+import argparse
 import asyncio
 import aiohttp
 import sys
@@ -23,6 +24,12 @@ logging.basicConfig(level=logging.DEBUG)
 # print(testValid)
 # print(testInvalid)
 
+@dataclass
+class ProgramArgs:
+  desiredVersion: str
+  fileNameReading: str
+  outFileSuffix: str | None
+
 class MatchResultType(Enum):
   UNKNOWN_PROJECT_TYPE = 1
   NO_MATCH = 2
@@ -44,7 +51,6 @@ def findMostRecentMatching(versionString: str, versionList: list[ProjectVersion]
   return matching[-1] if len(matching) > 0 else None
 
 async def getModrinthInfoFromComponents(
-  urlCache: UrlCache,
   api: ModrinthApi,
   components: UrlComponents,
   versionSearching: str
@@ -108,22 +114,20 @@ async def resolveCurseForgeResults(coroutineList: list) -> list[MatchSearchResul
     await asyncio.sleep(CurseForgeScraper.CRAWL_DELAY.seconds)
   return results
 
-async def setup():
+async def setup(args: ProgramArgs):
   async with async_playwright() as playwright:
     browser = await playwright.firefox.launch()
     async with aiohttp.ClientSession() as session:
-      await main(browser, session)
+      await main(browser, session, args)
     await browser.close()
 
-async def main(browser: Browser, session: aiohttp.ClientSession):
-  # DESIRED_VERSIONS = ["1.20.1", "1.19.4"]
-  # VERSION_SEARCHING: str = "1.20.1"
-  VERSION_SEARCHING: str = "1.19.2"
+async def main(
+  browser: Browser,
+  session: aiohttp.ClientSession,
+  args: ProgramArgs
+):
+  VERSION_SEARCHING: str = args.desiredVersion
 
-  if len(sys.argv) < 2:
-    printStderr("Missing file path argument.")
-    exit(1)
-  
   modrinthApi = ModrinthApi(session)
   curseForgeScraper = CurseForgeScraper(browser)
   urlCache = UrlCache()
@@ -133,7 +137,7 @@ async def main(browser: Browser, session: aiohttp.ClientSession):
   pendingModrinthResults: list[Coroutine[Any, Any, MatchSearchResult]] = [ ]
   pendingCurseForgeResults: list[Coroutine[Any, Any, MatchSearchResult]] = [ ]
 
-  for link in extractLinks(sys.argv[1]):
+  for link in extractLinks(args.fileNameReading):
     components = urlToComponents(link)
 
     if components is None:
@@ -147,7 +151,7 @@ async def main(browser: Browser, session: aiohttp.ClientSession):
 
     match components.domain:
       case "modrinth.com":
-        pendingModrinthResults.append(getModrinthInfoFromComponents(urlCache, modrinthApi, components, VERSION_SEARCHING))
+        pendingModrinthResults.append(getModrinthInfoFromComponents(modrinthApi, components, VERSION_SEARCHING))
       case "www.curseforge.com" | "legacy.curseforge.com":
         itemType = CurseForgeScraper.itemTypeFromString(components.paths[1])
 
@@ -191,4 +195,19 @@ async def main(browser: Browser, session: aiohttp.ClientSession):
     printStderr(f"MAYBE INVALID: {result}")
 
 if __name__ == "__main__":
-  asyncio.run(setup())
+  parser = argparse.ArgumentParser(
+    prog="Mod Download Url Extractor",
+    description="Fetches download URLs for minecraft mods, texture packs, etc. given a list of markdown-formatted links."
+  )
+
+  parser.add_argument("desired_version")
+  parser.add_argument("file_reading")
+  parser.add_argument("-o", "--out-name")
+  args = parser.parse_args()
+  printStderr(str(args))
+
+  asyncio.run(setup(ProgramArgs(
+    desiredVersion=args.desired_version,
+    fileNameReading=args.file_reading,
+    outFileSuffix=args.out_name
+  )))
