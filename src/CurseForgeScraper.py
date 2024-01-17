@@ -54,11 +54,39 @@ class CurseForgeScraper:
     })
 
   async def _getPageForItem(self, itemType: ItemType, projectName: str, versionString: str) -> str | None:
-
     match itemType:
       case ItemType.RESOURCE_PACK: return await self._getResourcePackPage(projectName, versionString)
       case _: return None
 
+  # Example input URL:
+  #   https://www.curseforge.com/minecraft/texture-packs/sky-villages-waystones-compat/files/4787119 
+  # Example output for the same URL:
+  #  https://mediafilez.forgecdn.net/files/4787/119/SkyVillages-WaystonesCompat-1.20.1-1.0.3-fabric.zip
+  async def _getDownloadLinkFromFileUrl(self, fileUrl: UrlComponents) -> str | None:
+    page = await self._requestPageHtml(fileUrl.wholeUrl(), {})
+    page = BeautifulSoup(page, features="html.parser")
+    section = page.find("section", class_="section-file-name")
+
+    if section is None:
+      return None
+
+    assert isinstance(section, Tag)
+    header = section.find("h3", string="File Name")
+
+    if header is None:
+      return None
+    
+    fileNameTag = header.find_next_sibling("p")
+
+    if fileNameTag is None:
+      return None
+    
+    assert isinstance(fileNameTag, Tag)
+
+    fileName: str = fileNameTag.text
+    fileId: str = fileUrl.paths[-1]
+    return f"https://mediafilez.forgecdn.net/files/{fileId[:4]}/{fileId[4:]}/{fileName}"
+    
   async def getLinkFor(
     self,
     itemType: ItemType,
@@ -84,7 +112,13 @@ class CurseForgeScraper:
           match linkElement.get("href"):
             # downloadLink is the absolute path to the file in curseforge.com.
             # It contains a leading slash, but doesn't contain the domain name.
-            case str(downloadLink): return f"https://www.curseforge.com{downloadLink}"
+            case str(downloadLink):
+              await asyncio.sleep(self.CRAWL_DELAY.seconds)
+              # This is the link to the file page, but we need the CDN URL. Otherwise,
+              # using cURL or Wget will fail due to JavaScript redirects.
+              filePageUrl = urlToComponents(f"https://www.curseforge.com{downloadLink}")
+              assert filePageUrl is not None
+              return await self._getDownloadLinkFromFileUrl(filePageUrl)
             case _: continue
     
     return None
